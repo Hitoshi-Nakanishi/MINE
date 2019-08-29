@@ -1,0 +1,1 @@
+This repository stored the log on the study about Mutual Information related
