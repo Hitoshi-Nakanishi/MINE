@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class Generator(nn.Module):
-
     def __init__(self, input_size=10, output_size=2, hidden_size=128):
         super().__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
@@ -22,7 +21,6 @@ class Generator(nn.Module):
         return x
 
 class Discriminator(nn.Module):
-
     def __init__(self, input_size=2, output_size=1, hidden_size=128):
         super().__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
@@ -46,7 +44,6 @@ class Discriminator(nn.Module):
         return x, mu, sigma
 
 class Mine(nn.Module):
-
     def __init__(self, noise_size=3, sample_size=2, output_size=1, hidden_size=128):
         super().__init__()
         self.fc1_noise = nn.Linear(noise_size, hidden_size, bias=False)
