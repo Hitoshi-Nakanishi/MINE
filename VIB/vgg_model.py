@@ -37,7 +37,7 @@ class VGG_IB(nn.Module):
                 init_var=0.01, sample_in_training=True, sample_in_testing=False, 
                  n_cls=10, no_ib=False, device='cpu'):
         super(VGG_IB, self).__init__()
-
+        self.device = device
         self.init_mag = mag
         self.threshold = threshold
         self.config = config
@@ -53,12 +53,12 @@ class VGG_IB(nn.Module):
                                        init_mag=self.init_mag, init_var=self.init_var,
                                        sample_in_training=sample_in_training,
                                        sample_in_testing=sample_in_testing,
-                                       device=device)
+                                       device=self.device)
         fc_ib2 = InformationBottleneck(512, mask_thresh=threshold, 
                                        init_mag=self.init_mag, init_var=self.init_var,
                                        sample_in_training=sample_in_training, 
                                        sample_in_testing=sample_in_testing,
-                                       device=device)
+                                       device=self.device)
         self.n_cls = n_cls
         if self.config in ['G', 'D6']:
             fc_layer_list = [nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, self.n_cls)] if no_ib else \
@@ -90,7 +90,8 @@ class VGG_IB(nn.Module):
                 ib = InformationBottleneck(v[0], mask_thresh=self.threshold, init_mag=self.init_mag,
                                            init_var=self.init_var, kl_mult=v[1], 
                                            sample_in_training=self.sample_in_training,
-                                           sample_in_testing=self.sample_in_testing)
+                                           sample_in_testing=self.sample_in_testing,
+                                           device=self.device)
                 if batch_norm:
                     layers += [conv2d, nn.BatchNorm2d(v[0]), nn.ReLU(inplace=True)]
                 else:

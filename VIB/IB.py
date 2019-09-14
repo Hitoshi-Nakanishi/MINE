@@ -62,7 +62,7 @@ class InformationBottleneck(Module):
         return mask
 
     def forward(self, x):
-        def reparameterize(mu, logvar, batch_size, device, sampling=True):
+        def reparameterize(mu, logvar, batch_size, sampling=True):
             # output dim: batch_size * dim
             if sampling:
                 std = logvar.mul(0.5).exp_()
@@ -80,8 +80,7 @@ class InformationBottleneck(Module):
         bsize = x.size(0)
         if (self.training and self.sample_in_training) or \
             (not self.training and self.sample_in_testing):
-            z_scale = reparameterize(self.post_z_mu, self.post_z_logD,
-                                     bsize, cuda=True, sampling=True)
+            z_scale = reparameterize(self.post_z_mu, self.post_z_logD, bsize, sampling=True)
             if not self.training:
                 z_scale *= self.get_mask_hard(self.mask_thresh)
         else:

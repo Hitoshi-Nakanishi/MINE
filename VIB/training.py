@@ -24,7 +24,7 @@ def train(train_loader, model, criterion, optimizer, epoch, writer, device, args
         ite = start_iter + i
         # measure data loading time
         data_time.update(time.time() - end)
-        input, target = input, target.to(device)
+        input, target = input.to(device), target.to(device)
         compute_start = time.time()
         if args.no_ib:
             output = model(input)
@@ -49,7 +49,7 @@ def train(train_loader, model, criterion, optimizer, epoch, writer, device, args
         prec1 = accuracy(output.data, target)[0]
         losses.update(ce_loss.item(), input.size(0))
         kld_meter.update(kl_total.item(), input.size(0))
-        top1.update(prec1[0], input.size(0))
+        top1.update(prec1.item(), input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)

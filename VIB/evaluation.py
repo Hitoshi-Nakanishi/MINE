@@ -11,12 +11,12 @@ def validate(val_loader, model, criterion, epoch, writer, device, args, masks=No
 
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
-        input, target = input, target.to(device)
+        input, target = input.to(device), target.to(device)
         output = model(input)
         loss = criterion(output, target)
         prec1 = accuracy(output.data, target)[0]
         losses.update(loss.item(), input.size(0))
-        top1.update(prec1[0], input.size(0))
+        top1.update(prec1.item(), input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
