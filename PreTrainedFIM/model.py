@@ -1,7 +1,9 @@
 import itertools
 import torch
 from torch import nn
+from torch.nn import functional as F
 import torchvision
+import numpy as np
 
 class VGG16_FIM(nn.Module):
     def __init__(self):
@@ -71,17 +73,19 @@ class VGG16_FIM(nn.Module):
         return mu + eps*std
 
 class VGG16bn_FIM(nn.Module):
-    def __init__(self):
-        super(VGG16bn_FIM, self).__init__()
-        self.pretrained = pretrained = self._load_pretrained_model()
+    def __init__(self, pretrained = True, weight_fixing = True, 
+                 evaluate_FIM_mode = False, num_classes = 10):
+        super().__init__()
+        self.evaluate_FIM_mode = evaluate_FIM_mode
+        self.pretrained = pretrained = self._load_pretrained_model(pretrained, weight_fixing)
         self.features = child = next(itertools.islice(pretrained.children(), 0, 1))
         self.avgpool = next(itertools.islice(pretrained.children(), 1, 2))
-        self.classifier = next(itertools.islice(pretrained.children(), 2, 3))
-        self.logvars = torch.ones(1, 13, requires_grad=True) * 0.10
-        self.layer_dims = torch.tensor([3*64,64*64,64*128,128*128,128*256,
-                                        256*256,256*256,256*512,512*512,
-                                        512*512,512*512,512*512,512*512],
-                                       requires_grad=False, dtype=torch.float32)
+        # self.classifier = next(itertools.islice(pretrained.children(), 2, 3))
+        self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096), nn.ReLU(True), nn.Dropout(),
+            nn.Linear(4096, 4096), nn.ReLU(True), nn.Dropout(),
+            nn.Linear(4096, num_classes))
+        
         self.Conv0 = child[0]   # (3,64)
         self.Btch1 = child[1]   # Batch
         self.Conv3 = child[3]   # (64,64)
@@ -108,16 +112,18 @@ class VGG16bn_FIM(nn.Module):
         self.Btch38 = child[38] # Batch
         self.Conv40 = child[40] # (512,512)
         self.Btch41 = child[41] # Batch
+        
+        self.logvars = torch.ones(1, 13, requires_grad=True) * 0.10
         layers = [self.Conv0, self.Conv3, self.Conv7, self.Conv10,
                   self.Conv14, self.Conv17, self.Conv20, self.Conv24,
                   self.Conv27, self.Conv30, self.Conv34, self.Conv37, self.Conv40]
         # constant in KL divergence
-        self.w_squared = torch.tensor(0,requires_grad=False)
-        self.layer_dimensions = torch.zeros(1, 13, requires_grad=True)
+        self.w_squared = torch.tensor(0, requires_grad=False)
+        self.layer_dims = torch.zeros(1, 13, requires_grad=False)
         for i, layer in enumerate(layers):
             params = next(layer.parameters())
             self.w_squared = self.w_squared + params.pow(2).sum()
-            self.layer_dimensions[0,i] = params.size()
+            self.layer_dims[0,i] = torch.tensor(np.prod(params.size()))
 
     def forward(self,x):
         out = self.reparameterize(self.Conv0(x), self.logvars[0,0])
@@ -147,19 +153,23 @@ class VGG16bn_FIM(nn.Module):
         out = self.reparameterize(self.Conv40(out), self.logvars[0,12])
         out = F.max_pool2d(F.relu(self.Btch41(out)), 2, 2)
         out = self.avgpool(out)
-        out = torch.flatten(x, 1)
+        out = torch.flatten(out, 1)
         out = self.classifier(out)
         return out
 
-    def _load_pretrained_model(self):
-        vgg_model = torchvision.models.vgg16_bn(pretrained=True)
+    def _load_pretrained_model(self, pretrained = True, weight_fixing = True):
+        vgg_model = torchvision.models.vgg16_bn(pretrained = pretrained)
         child_counter = 0
-        for child in vgg_model.children():
-            for param in child.parameters():
-                param.requires_grad = False
+        if weight_fixing:
+            for child in vgg_model.children():
+                for param in child.parameters():
+                    param.requires_grad = False
         return vgg_model
     
     def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5*logvar)
-        eps = torch.randn_like(mu)
-        return mu + eps*std
+        if self.evaluate_FIM_mode:
+            std = torch.exp(0.5*logvar)
+            eps = torch.randn_like(mu)
+            return mu + eps*std
+        else:
+            return mu
