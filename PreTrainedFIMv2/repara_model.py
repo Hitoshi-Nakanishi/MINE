@@ -4,13 +4,17 @@ from torch import nn
 from torch.nn import functional as F
 import torchvision
 import numpy as np
-from .reparameterize_layer import ReparamterNorm
+from .reparameterize_layer import ReparamterNorm, MultiSequential
 
 cfgs = {
     'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+}
+
+input_dims_cfgs = {
+    'D': [32, 32, 'M', 16, 16, 'M', 8, 8, 8, 'M', 4, 4, 4, 'M', 2, 2, 2, 'M']
 }
 
 class VGG16bn_FIM(nn.Module):
@@ -20,19 +24,15 @@ class VGG16bn_FIM(nn.Module):
 
         pretrained = self._load_pretrained_model(pretrained, weight_fixing)
         child = next(itertools.islice(pretrained.children(), 0, 1))
-        self.features, self.logvars = \
-            load_pretrained_with_repara(cfgs['D'], child, batch_norm=True)
+        cfgs_pair = zip(cfgs['D'], input_dims_cfgs['D'])
+        self.features = load_pretrained_with_repara(cfgs_pair, child, batch_norm=True)
         self.avgpool = next(itertools.islice(pretrained.children(), 1, 2))
         # self.classifier = next(itertools.islice(pretrained.children(), 2, 3))
         self.classifier = nn.Sequential(
             nn.Linear(512 * 7 * 7, 4096), nn.ReLU(True), nn.Dropout(),
             nn.Linear(4096, 4096), nn.ReLU(True), nn.Dropout(),
             nn.Linear(4096, num_classes))
-
         self.evaluate_FIM_mode = False
-        #self.logvars = torch.ones(13, requires_grad=True)
-        #for i, var in enumerate(self.logvars_list):
-        #    self.logvars[i] = var
 
         # constant in KL divergence
         self.w_squared = torch.tensor(0, requires_grad=False).float()
@@ -46,11 +46,11 @@ class VGG16bn_FIM(nn.Module):
                 layer_id += 1
 
     def forward(self,x):
-        x = self.features(x)
+        x, y = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
-        return x
+        return x, y
 
     def _load_pretrained_model(self, pretrained = True, weight_fixing = True):
         vgg_model = torchvision.models.vgg16_bn(pretrained = pretrained)
@@ -64,7 +64,6 @@ class VGG16bn_FIM(nn.Module):
     def to_device_child_tensors(self, device):
         self.layer_dims = self.layer_dims.to(device)
         self.w_squared = self.w_squared.to(device)
-        self.logvars = self.logvars.to(device)
         for _, layer in enumerate(self.features.children()):
             if isinstance(layer, ReparamterNorm):
                 layer.logvar = layer.logvar.to(device)
@@ -81,14 +80,39 @@ class VGG16bn_FIM(nn.Module):
     def _switch_parameter_gradient(self):
         for param in self.parameters():
             param.requires_grad = not self.evaluate_FIM_mode
-        self.logvars.requires_grad = self.evaluate_FIM_mode
-        #self.logvars.data.requires_grad = self.evaluate_FIM_mode
         for _, layer in enumerate(self.features.children()):
             if isinstance(layer, ReparamterNorm):
                 layer.reparameterization = self.evaluate_FIM_mode
-                #layer.logvar.requires_grad = self.evaluate_FIM_mode
-                #layer.logvar.data.requires_grad = True #self.evaluate_FIM_mode
-                #print(layer, layer.logvar.data.requires_grad)
+                for param in layer.logvar.parameters():
+                    param.requires_grad = self.evaluate_FIM_mode
+
+    def inactivate_parameters_ex_specific_layer(self, layerId):
+        """
+        for VGG16, layerId is from 0 up to 12
+        """
+        count_ReparameterNorm = 0
+        for _, layer in enumerate(self.features.children()):
+            if isinstance(layer, ReparamterNorm):
+                if count_ReparameterNorm == layerId:
+                    for param in layer.logvar.parameters():
+                        param.requires_grad = True
+                    layer.reparameterization = True
+                else:
+                    for param in layer.logvar.parameters():
+                        param.requires_grad = False
+                    layer.reparameterization = False
+                count_ReparameterNorm += 1
+
+    def initialize_FIM_weight(self):
+        def init_weights(m):
+            if type(m) == nn.Conv2d:
+                nn.init.normal_(m.weight, mean=0, std=0.01)
+                m.bias.data.fill_(0.01)
+        
+        for layer in self.features:
+            if isinstance(layer, ReparamterNorm):
+                print(layer.reparameterization)
+                layer.logvar.apply(init_weights)
 
 """
 def make_layers_with_repara(cfg, batch_norm=False):
@@ -112,22 +136,26 @@ def make_layers_with_repara(cfg, batch_norm=False):
     return nn.Sequential(*layers)
 """
 
-def load_pretrained_with_repara(cfg, child, batch_norm=False):
+def load_pretrained_with_repara(cfgs_pair, child, batch_norm=False):
     layer_ctr = 0
     layers = []
-    logvarslist = []
-    for v in cfg:
+    layer_contrasts = []
+    in_channels = 3
+    for v, u in cfgs_pair:
         if v == 'M':
             layers += [child[layer_ctr]]
+            layer_contrasts += [0]
             layer_ctr += 1
         else:
             conv2d = child[layer_ctr]
-            repara = ReparamterNorm()
-            logvarslist += [repara.logvar]
+            repara = ReparamterNorm(input_dims = (v, u, u), hidden_dim = v)
             if batch_norm:
                 layers += [conv2d, repara, child[layer_ctr+1], child[layer_ctr+2]]
+                layer_contrasts += [0, 1, 0, 0]
                 layer_ctr += 3
             else:
                 layers += [conv2d, repara, child[layer_ctr]]
+                layer_contrasts += [0, 1, 0]
                 layer_ctr += 2
-    return nn.Sequential(*layers), nn.Parameter(torch.squeeze(torch.stack(logvarslist)))
+    return MultiSequential(layer_contrasts, *layers)
+    #, nn.Parameter(torch.squeeze(torch.stack(logvarslist)))

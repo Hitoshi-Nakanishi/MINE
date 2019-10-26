@@ -1,3 +1,3 @@
-python train_preTrainedVGG_fromScratch.py --pretrained --weight_fixing
-python train_preTrainedVGG_fromScratch.py --pretrained 
-python train_preTrainedVGG_fromScratch.py
+python PreTrainedv2/train_preTrainedv2_VGG_fromScratch.py --pretrained --weight_fixing
+python PreTrainedv2/train_preTrainedv2_VGG_fromScratch.py --pretrained 
+python PreTrainedv2/train_preTrainedv2_VGG_fromScratch.py
